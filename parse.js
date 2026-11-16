@@ -252,6 +252,58 @@ function normalizeLabel(raw) {
 
 const BLOCK_TAGS = new Set(('address article aside base basefont blockquote body caption center col colgroup dd details dialog dir div dl dt fieldset figcaption figure footer form frame frameset h1 h2 h3 h4 h5 h6 head header hr html iframe legend li link main menu menuitem nav noframes ol optgroup option p param section source summary table tbody td tfoot th thead title tr track ul').split(' '));
 
+// Whether the inline parser is currently inside a raw `<a href="...">`
+// tag (document-level, reset per parse()). While set, extended
+// autolinks (www / schemes / mailto: / xmpp: / bare email) are
+// suppressed and render as plain text; angle autolinks still link.
+// Set by an opening `<a>` tag whose first attribute is a non-empty
+// quoted href, cleared by `</a>`. A markdown link does not set it.
+let inLink = false;
+
+// Is `tag` (raw HTML tag text from matchHtml) an opening `<a>` tag?
+// marked sets its inLink state for any inline `<a` tag that has a
+// literal space (or `>`/`/`) right after the tag name — the href
+// details do not matter (`<a foo>`, `<a href>`, `<a href="">`,
+// `<a href=x>`, `<a href ="x">`, `<a id="y" href="x">` all set it).
+// It does NOT set for a tab/newline right after `<a` (`<a\thref>`,
+// `<a\nhref>`), nor for a tag where a quoted value is immediately
+// followed by a letter (`<a href="x"bar>`), nor an unclosed tag.
+function anchorOpen(tag) {
+  if (tag.length < 3 || tag.charCodeAt(0) !== 60) return false;
+  const c1 = tag.charCodeAt(1);
+  if (c1 !== 97 && c1 !== 65) return false;
+  const c2 = tag.charCodeAt(2);
+  if (c2 === 62 || c2 === 47) return true; // bare `<a>` / `<a/>`
+  if (c2 !== 32) return false; // must be a literal space, not tab/newline
+  // a quoted attribute value must be followed by a space, `>`, `/`,
+  // or the end of the tag — not directly by another attribute char
+  let i = 2;
+  while (i < tag.length) {
+    const c = tag.charCodeAt(i);
+    if (c === 34 || c === 39) {
+      const closeQ = tag.indexOf(String.fromCharCode(c), i + 1);
+      if (closeQ < 0) return false;
+      if (closeQ + 1 >= tag.length) return true;
+      const after = tag.charCodeAt(closeQ + 1);
+      if (after !== 32 && after !== 62 && after !== 47) return false;
+      i = closeQ + 1;
+    } else {
+      i++;
+    }
+  }
+  return true;
+}
+
+// Is `tag` a closing `</a>` tag (case-insensitive, optional spaces)?
+function anchorClose(tag) {
+  if (tag.length < 4 || tag.charCodeAt(0) !== 60 || tag.charCodeAt(1) !== 47) return false;
+  const c2 = tag.charCodeAt(2);
+  if (c2 !== 97 && c2 !== 65) return false;
+  let i = 3;
+  while (i < tag.length && tag.charCodeAt(i) === 32) i++;
+  return i < tag.length && tag.charCodeAt(i) === 62;
+}
+
 // Try to match raw HTML starting at s[i] === '<'. Returns the end index
 // (exclusive) or -1.
 function matchHtml(s, i) {
@@ -874,7 +926,8 @@ function parseInline(s, refs) {
       j = idx;
       break;
     }
-    // plain segment [i, j): look for an extended autolink inside it
+    // plain segment [i, j): look for an extended autolink inside it,
+    // unless inside a raw `<a href="...">` (inLink suppresses them)
     let seg = i;
     let done = false;
     // a trailing `_` run after an email is the closing delimiter of an
@@ -885,7 +938,7 @@ function parseInline(s, refs) {
       const nd = nodes[q];
       if (typeof nd !== 'string' && nd.t === 'd' && nd.ch === '_' && nd.open) { hasUnderscoreOpener = true; break; }
     }
-    while (!done) {
+    while (!done && !inLink) {
       AUTO_RE.lastIndex = seg;
       const am = AUTO_RE.exec(s);
       if (!am || am.index >= j) break;
@@ -1136,7 +1189,12 @@ function parseInline(s, refs) {
         const he = matchHtml(s, j);
         if (he > 0) {
           flushText(j);
-          nodes.push({ t: 'h', s: s.slice(j, he) });
+          const tag = s.slice(j, he);
+          nodes.push({ t: 'h', s: tag });
+          // a raw `<a href="...">` opens the inLink state (extended
+          // autolinks suppressed until `</a>`); a raw `</a>` closes it
+          if (anchorOpen(tag)) inLink = true;
+          else if (anchorClose(tag)) inLink = false;
           i = he;
           textStart = i;
         } else {
@@ -2267,6 +2325,7 @@ export function parse(markdown) {
   let src = markdown;
   if (src.indexOf('\r') >= 0) src = src.replace(/\r\n?/g, '\n');
   const refs = new Map();
+  inLink = false;
   const doc = parseBlocks(src, refs);
   const out = [];
   renderBlocks(doc, refs, out);
