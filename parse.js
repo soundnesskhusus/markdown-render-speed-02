@@ -2102,23 +2102,32 @@ function parseBlocks(src, refs) {
       pendingHtml = null;
     }
     // A fenced code block's content lines do not need to match a list
-    // item's indent: the block runs until its closing fence, even if a
-    // content line is not indented enough to be inside the list item
-    // that holds it (`function f...` at column 0 stays code). But a
-    // line that does not match a block-quote container DOES end the
-    // block: the `>` marker is required (`> ```\nfoo` leaves `foo` as
-    // a top-level paragraph, not code).
+    // item's indent: once the block has content, it runs until its
+    // closing fence, even if a content line is not indented enough to
+    // be inside the list item that holds it (`function f...` at
+    // column 0 stays code). But a line that does not match a
+    // block-quote container DOES end the block: the `>` marker is
+    // required (`> ```\nfoo` leaves `foo` as a top-level paragraph,
+    // not code). And a fence with NO content yet also ends when its
+    // first content line does not match the container (`- a\n  ```\nfoo`
+    // -> empty code block, `foo` is a top-level paragraph).
     if (leafOpen && leaf.t === 'code' && leaf.fence && !blank) {
       const firstUnmatched = matched < stack.length ? stack[matched] : null;
       if (!firstUnmatched || firstUnmatched.t !== 'quote') {
-        if (isClosingFence(rem, col, leaf)) {
-          closeLeaf();
-          while (stack.length > matched) popContainer();
+        if (matched < stack.length && leaf.lines.length === 0) {
+          // no content yet and a container did not match: fall
+          // through to the container-pop handling below, which ends
+          // the (empty) code block and its container
+        } else {
+          if (isClosingFence(rem, col, leaf)) {
+            closeLeaf();
+            while (stack.length > matched) popContainer();
+            continue;
+          }
+          leaf.lines.push(stripToCol(rem, col, col + leaf.indent));
+          leaf.lastNL = lineNL[li];
           continue;
         }
-        leaf.lines.push(stripToCol(rem, col, col + leaf.indent));
-        leaf.lastNL = lineNL[li];
-        continue;
       }
       // else: the line lacks a `>` for an open quote, so the block
       // ends here; fall through to the container-pop handling below
