@@ -2291,8 +2291,18 @@ function parseBlocks(src, refs) {
     // first content line does not match the container (`- a\n  ```\nfoo`
     // -> empty code block, `foo` is a top-level paragraph).
     if (leafOpen && leaf.t === 'code' && leaf.fence && !blank) {
-      const firstUnmatched = matched < stack.length ? stack[matched] : null;
-      if (!firstUnmatched || firstUnmatched.t !== 'quote') {
+      // A line that does not match any open block-quote container
+      // ends the block, even when an outer list item is the first
+      // unmatched container (`> ~~~~` inside an item, then a `*`
+      // item at a lower indent with no `>`: the fence ends, it is not
+      // code content). A line that matches all quotes (but not a list
+      // item's indent) is still code content once the block is
+      // established.
+      let unmatchedQuote = false;
+      for (let q = matched; q < stack.length; q++) {
+        if (stack[q].t === 'quote') { unmatchedQuote = true; break; }
+      }
+      if (!unmatchedQuote) {
         if (matched < stack.length && leaf.lines.length === 0) {
           // no content yet and a container did not match: fall
           // through to the container-pop handling below, which ends
