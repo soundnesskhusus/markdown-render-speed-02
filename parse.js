@@ -764,6 +764,19 @@ function processEmphasis(nodes) {
           if (spaceBefore && wordAfter) continue;
         }
       }
+      // H2: a lone `*` closer does not steal one delimiter from a `**`
+      // opener when a later `**` closer is waiting to form a strong
+      // with it (`**public as *so*other* option html**`: the `*` after
+      // `other` stays literal inside the `<strong>`, it does not pair
+      // with the opening `**` as emphasis).
+      if (o.ch === '*' && o.n >= 2 && nd.n === 1) {
+        let laterStrong = false;
+        for (let k = i + 1; k < nodes.length; k++) {
+          const later = nodes[k];
+          if (typeof later !== 'string' && later.t === 'd' && later.ch === '*' && later.n >= 2 && later.close) { laterStrong = true; break; }
+        }
+        if (laterStrong) continue;
+      }
       found = j;
       break;
     }
