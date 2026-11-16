@@ -854,6 +854,26 @@ function tryLink(s, i, nodes, brackets, refs) {
       }
     }
   }
+  // A link also fails when its text contains a code span whose content
+  // holds a backtick (a multi-backtick span) followed by any further
+  // content: marked's link-text scan mis-parses the backticks and the
+  // link stays literal (`[x `` b ` c `` y](u)` does not link, but
+  // `[x `` b ` c ``](u)` — the span last in the text — still links,
+  // and a span with no backtick inside links either way). When this
+  // happens the emphasis delimiters inside the failed text also stay
+  // literal (`[x _a `` b ` c ``_](u)` keeps both `_` raw), so they are
+  // neutralised here rather than left for processEmphasis.
+  for (let q = 0; q + 1 < children.length; q++) {
+    const nd = children[q];
+    if (typeof nd !== 'string' && nd.t === '`' && nd.s.indexOf('`') >= 0) {
+      opener.act = false;
+      for (let r = opener.pos + 1; r < nodes.length; r++) {
+        const dn = nodes[r];
+        if (typeof dn !== 'string' && dn.t === 'd') nodes[r] = dn.ch.repeat(dn.n);
+      }
+      return -1;
+    }
+  }
   const n = s.length;
   let href = null;
   let title = null;
