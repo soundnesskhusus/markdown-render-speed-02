@@ -740,6 +740,30 @@ function processEmphasis(nodes) {
         // both lengths are multiples of 3
         if ((o.n + nd.n) % 3 === 0 && !(o.n % 3 === 0 && nd.n % 3 === 0)) continue;
       }
+      // H1: an outer single `*` does not pair across an inner strong
+      // when the strong is separated from the opener by a space and
+      // directly followed by a word char (`*a **b**c*` stays literal,
+      // but `*a**b**c*` and `*a **b** c*` pair). Only when the pair
+      // would be emphasis (both runs length 1) and exactly one strong
+      // — and no other delimiter or emphasis — lies between them.
+      if (o.ch === '*' && o.n === 1 && nd.n === 1) {
+        let strongIdx = -1, others = false;
+        for (let k = j + 1; k < i; k++) {
+          const mid = nodes[k];
+          if (typeof mid === 'string') continue;
+          if (mid.t === 'e' && mid.tag === 'strong' && strongIdx < 0) { strongIdx = k; continue; }
+          others = true; break;
+        }
+        if (strongIdx >= 0 && !others) {
+          const before = nodes[strongIdx - 1];
+          const after = nodes[strongIdx + 1];
+          const spaceBefore = typeof before === 'string' && before.length > 0 &&
+            (before.charCodeAt(before.length - 1) === 32 || before.charCodeAt(before.length - 1) === 9);
+          const wordAfter = typeof after === 'string' && after.length > 0 &&
+            after.charCodeAt(0) !== 32 && after.charCodeAt(0) !== 9;
+          if (spaceBefore && wordAfter) continue;
+        }
+      }
       found = j;
       break;
     }
