@@ -2195,6 +2195,12 @@ function parseBlocks(src, refs) {
         // that merely precedes the quote as a sibling does not count.
         // A list nested inside a quote still uses the absolute column
         // (`> \tindented` in a quote+list -> 4 spaces).
+        // The column to expand from is whichever of the `>` marker
+        // column and the content column is 2 mod 4: the tab then
+        // expands to 2 spaces. A `>` at col 2 (content col 4) uses
+        // the marker column; a `>` at col 4 (content col 6, as in
+        // doc-12's `    > \tindented` inside a `+` item) uses the
+        // content column — the marker column there would give 4.
         let quoteInList = false;
         if (lineQuoteCol >= 0) {
           let seenList = false;
@@ -2204,7 +2210,7 @@ function parseBlocks(src, refs) {
             else if (ct === 'quote' && seenList) { quoteInList = true; break; }
           }
         }
-        if (quoteInList) expCol = lineQuoteCol;
+        if (quoteInList) expCol = (lineQuoteCol % 4 === 2) ? lineQuoteCol : col;
         else expCol = inList ? col : (lineQuoteCol >= 0 ? lineQuoteCol + 2 : col);
       } else {
         expCol = lineQuoteCol >= 0 ? lineQuoteCol + 2 : col;
