@@ -515,12 +515,29 @@ function trimAuto(s, start, end) {
         continue;
       }
       if (c === 41) { // ')'
-        let open = 0, close = 0;
-        for (let k = start; k < e; k++) {
-          if (s.charCodeAt(k) === 40) open++;
-          else if (s.charCodeAt(k) === 41) close++;
+        // Is the trailing ')' matched by a preceding '(' ? Simulate
+        // paren depth over the candidate before it: '(' increments,
+        // ')' decrements but not below 0 (a ')' at depth 0 is stray
+        // and does not count). A stray ')' earlier in the URL (e.g.
+        // `...page=4)](b)`) must not make the trailing ')' look
+        // unmatched: only the depth just before the trailing ')'
+        // decides. A matched trailing ')' is trimmed only when the
+        // candidate ends with '))' and parens are balanced overall.
+        let depth = 0;
+        for (let k = start; k < e - 1; k++) {
+          const ch = s.charCodeAt(k);
+          if (ch === 40) depth++;
+          else if (ch === 41 && depth > 0) depth--;
         }
-        if (open < close || (open === close && e - 1 > start && s.charCodeAt(e - 2) === 41)) { e--; continue; }
+        if (depth === 0) { e--; continue; }
+        if (e - 1 > start && s.charCodeAt(e - 2) === 41) {
+          let open = 0, close = 0;
+          for (let k = start; k < e; k++) {
+            if (s.charCodeAt(k) === 40) open++;
+            else if (s.charCodeAt(k) === 41) close++;
+          }
+          if (open === close) { e--; continue; }
+        }
         break;
       }
       if (TRAIL_PUNCT.has(c)) { e--; continue; }
