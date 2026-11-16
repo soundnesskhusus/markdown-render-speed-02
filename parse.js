@@ -2093,9 +2093,12 @@ function parseBlocks(src, refs) {
     const leafOpen = leaf !== null;
     // A type 1-5 HTML block ended at its closing tag on the previous
     // line: its trailing newline is kept only if this line is non-blank
-    // and still inside the block's parent container.
+    // and still inside the block's parent container. A whitespace-only
+    // line (a lone tab or spaces) does NOT drop the newline — only a
+    // truly empty line (or a line that leaves the container) does
+    // (`<script>a</script>\n\t\nfoo` keeps the `\n` after `</script>`).
     if (pendingHtml && li === pendingHtml.endLine + 1) {
-      if (blank || matched < pendingHtml.parentDepth) pendingHtml.node.noTrailNL = true;
+      if (line.length === 0 || mc.rem.length === 0 || matched < pendingHtml.parentDepth) pendingHtml.node.noTrailNL = true;
       pendingHtml = null;
     }
     // A fenced code block's content lines do not need to match a list
