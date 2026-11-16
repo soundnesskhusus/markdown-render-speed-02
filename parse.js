@@ -783,6 +783,39 @@ function processEmphasis(nodes) {
           if (spaceBefore && wordAfter) continue;
         }
       }
+      // H1b: a `**` closer does not pair with a single `*` opener
+      // across an inner strong when the strong is separated from the
+      // opener by a space and directly followed by a word char
+      // (`**a *b **c**d* e**`: the final `**` pairs with the opening
+      // `**`, not with the `*` before `b`). But the `*` opener only
+      // lets the scan pass through to the `**` opener if an earlier
+      // `*` closer already tried it and stayed literal
+      // (`**a *b **c**d* e**` has the `*` after `d`); with no such
+      // earlier closer (`**a *b **c**d e**`) the `*` opener blocks
+      // the scan and the `**` closer pairs with nothing.
+      if (o.ch === '*' && o.n === 1 && nd.n === 2) {
+        let strongIdx = -1, others = false, hasLiteralCloser = false;
+        for (let k = j + 1; k < i; k++) {
+          const mid = nodes[k];
+          if (typeof mid === 'string') continue;
+          if (mid.t === 'd' && mid.close && !mid.open && mid.n === 1) { hasLiteralCloser = true; continue; }
+          if (mid.t === 'e' && mid.tag === 'strong' && strongIdx < 0) { strongIdx = k; continue; }
+          others = true; break;
+        }
+        if (strongIdx >= 0 && !others) {
+          const before = nodes[strongIdx - 1];
+          const after = nodes[strongIdx + 1];
+          const spaceBefore = typeof before === 'string' && before.length > 0 &&
+            (before.charCodeAt(before.length - 1) === 32 || before.charCodeAt(before.length - 1) === 9);
+          const wordAfter = typeof after === 'string' && after.length > 0 &&
+            after.charCodeAt(0) !== 32 && after.charCodeAt(0) !== 9 &&
+            after.charCodeAt(0) !== 10 && after.charCodeAt(0) !== 13;
+          if (spaceBefore && wordAfter) {
+            if (hasLiteralCloser) continue;
+            found = -1; break;
+          }
+        }
+      }
       // H2: a lone `*` closer does not steal one delimiter from a `**`
       // opener when a later `**` closer is waiting to form a strong
       // with it (`**public as *so*other* option html**`: the `*` after
