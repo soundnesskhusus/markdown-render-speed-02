@@ -183,6 +183,21 @@ function stripToCol(s, col, target) {
   }
   return s.slice(i);
 }
+// Strip a fenced code block's indent from a content line. Unlike
+// stripToCol this counts characters, not columns: a tab counts as ONE
+// character, and if the strip amount falls inside a tab the whole tab
+// is removed, never partially expanded to spaces (`  ```\n\tfoo` ->
+// `foo`, not `  foo`; `  ```\n  \tfoo` -> `\tfoo`, the tab untouched).
+// A fence indented by spaces strips that many leading spaces/tabs.
+function stripFenceIndent(s, indent) {
+  let i = 0;
+  while (i < indent && i < s.length) {
+    const ch = s.charCodeAt(i);
+    if (ch === 32 || ch === 9) i++;
+    else break;
+  }
+  return s.slice(i);
+}
 function isBlank(s) {
   for (let i = 0; i < s.length; i++) {
     const c = s.charCodeAt(i);
@@ -2151,7 +2166,7 @@ function parseBlocks(src, refs) {
             while (stack.length > matched) popContainer();
             continue;
           }
-          leaf.lines.push(stripToCol(rem, col, col + leaf.indent));
+          leaf.lines.push(stripFenceIndent(rem, leaf.indent));
           leaf.lastNL = lineNL[li];
           continue;
         }
@@ -2210,7 +2225,7 @@ function parseBlocks(src, refs) {
       if (leaf && leaf.t === 'code') {
         // a blank line inside a code block keeps its whitespace, with
         // the code indent stripped (`    chunk1\n      \n` -> `chunk1\n  \n`)
-        leaf.lines.push(leaf.fence ? stripToCol(rem, col, col + leaf.indent) : stripToCol(rem, col, col + 4));
+        leaf.lines.push(leaf.fence ? stripFenceIndent(rem, leaf.indent) : stripToCol(rem, col, col + 4));
         leaf.lastNL = lineNL[li];
       } else if (leaf && leaf.t === 'html' && (leaf.endSub !== null || leaf.endTag)) {
         // types 1-5 end at their closing tag, not at a blank line:
@@ -2267,7 +2282,7 @@ function parseBlocks(src, refs) {
       }
       if (leaf.t === 'code' && leaf.fence) {
         if (isClosingFence(rem, col, leaf)) { closeLeaf(); continue; }
-        leaf.lines.push(stripToCol(rem, col, col + leaf.indent));
+        leaf.lines.push(stripFenceIndent(rem, leaf.indent));
         leaf.lastNL = lineNL[li];
         continue;
       }
