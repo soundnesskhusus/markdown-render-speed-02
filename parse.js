@@ -1545,10 +1545,10 @@ function matchQuote(rem, col) {
   if (ii < rem.length) {
     const c = rem.charCodeAt(ii);
     if (c === 32) { cc++; ii++; }
-    else if (c === 9) {
-      // consume one column of the tab; the rest stays as spaces
-      return { rem: stripToCol(rem.slice(ii), cc, cc + 1), col: cc + 1, markerCol };
-    }
+    // a tab after `>` is NOT consumed here: it stays in `rem` so the
+    // caller expands it at the content column (consuming one column
+    // of it here would under-expand it for nested quotes, e.g.
+    // `>>\tfoo` should give two spaces, not one)
   }
   return { rem: rem.slice(ii), col: cc, markerCol };
 }
