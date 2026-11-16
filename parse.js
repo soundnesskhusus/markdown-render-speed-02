@@ -951,7 +951,25 @@ function parseInline(s, refs) {
       flushText(p);
       const txt = s.slice(p, e);
       const defer = brackets.some(b => b.act);
-      nodes.push({ t: 'u', href: esc(what === 'www.' ? 'http://' + txt : txt), txt: esc(txt), raw: txt, defer: defer ? 1 : 0 });
+      const node = { t: 'u', href: esc(cleanHref(what === 'www.' ? 'http://' + txt : txt)), txt: esc(txt), raw: txt, defer: defer ? 1 : 0 };
+      // If the surrounding link does NOT form, this autolink is a real
+      // link and takes its greedy extent (past the `]`, e.g.
+      // `https://x.io)]`): remember it so the `]` handler can extend
+      // the node when tryLink fails. The greedy end is computed without
+      // the `]` limit; trimAuto cuts it back at an unmatched `(`.
+      if (defer) {
+        const extG = autoExtent(s, p, undefined);
+        const eG = trimAuto(s, p, extG);
+        if (eG > e) {
+          const gTxt = s.slice(p, eG);
+          node.gEnd = eG;
+          node.gTxt = gTxt;
+          node.gHref = esc(cleanHref(what === 'www.' ? 'http://' + gTxt : gTxt));
+          node.p = p;
+          node.e = e;
+        }
+      }
+      nodes.push(node);
       i = e;
       textStart = e;
       done = true;
@@ -1139,7 +1157,34 @@ function parseInline(s, refs) {
         i = e;
         textStart = i;
       } else {
-        i = j + 1;
+        // The link did not form: a deferred autolink inside it is a
+        // real link and takes its greedy extent (past the `]`, e.g.
+        // `https://x.io)]`). Extend the most recent deferred autolink
+        // whose greedy end covers this `]`, absorbing the text nodes
+        // between it and the `]` and skipping past the `]`.
+        let extended = false;
+        for (let k = nodes.length - 1; k >= 0; k--) {
+          const nd = nodes[k];
+          if (typeof nd !== 'string' && nd.t === '[') break;
+          if (typeof nd === 'string' || nd.t !== 'u' || !nd.defer || nd.gEnd === undefined || nd.gEnd < j + 1) continue;
+          // only extend when everything after the autolink is plain
+          // text (no delimiters/links in between that must survive)
+          let allText = true;
+          for (let q = k + 1; q < nodes.length; q++) {
+            if (typeof nodes[q] !== 'string') { allText = false; break; }
+          }
+          if (!allText) break;
+          nd.txt = esc(nd.gTxt);
+          nd.href = nd.gHref;
+          nd.raw = nd.gTxt;
+          nd.defer = 0;
+          nodes.length = k + 1;
+          i = nd.gEnd;
+          textStart = nd.gEnd;
+          extended = true;
+          break;
+        }
+        if (!extended) i = j + 1;
       }
       continue;
     }
