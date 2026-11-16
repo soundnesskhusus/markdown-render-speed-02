@@ -799,21 +799,82 @@ function processEmphasis(nodes) {
         }
         if (laterStrong) continue;
       }
+      // H3: an exact `**` closer does not pair with an exact `**`
+      // opener when an inner emphasis is preceded by a space and
+      // followed immediately by a word char that runs directly to the
+      // closer (`**a *b*c**` stays literal, the outer strong does not
+      // form). No space before the inner em (`**foo*bar*baz**`,
+      // `**Gomphocarpus (*...*)**`, `**foo "*bar*" foo**`) or a space
+      // after it (`**a *b* c**`) or more text after the word char
+      // (`**a *b*c* d**`) all still pair; a `***` closer still forms
+      // the strong with its leftover inside, see the fromE rule below.
+      if (o.ch === '*' && o.n === 2 && nd.n === 2) {
+        let lastE = -1;
+        for (let k = j + 1; k < i; k++) {
+          const mid = nodes[k];
+          if (typeof mid !== 'string' && mid.t === 'e' && mid.tag === 'em') lastE = k;
+        }
+        if (lastE >= 0 && lastE + 1 === i - 1 && lastE - 1 > j) {
+          const before = nodes[lastE - 1];
+          const after = nodes[lastE + 1];
+          const spaceBefore = typeof before === 'string' && before.length > 0 &&
+            (before.charCodeAt(before.length - 1) === 32 || before.charCodeAt(before.length - 1) === 9);
+          const wordAfter = typeof after === 'string' && after.length > 0 &&
+            after.charCodeAt(0) !== 32 && after.charCodeAt(0) !== 9 &&
+            after.charCodeAt(0) !== 10 && after.charCodeAt(0) !== 13;
+          if (spaceBefore && wordAfter) continue;
+        }
+      }
       found = j;
       break;
     }
-    if (found < 0) { i++; continue; }
+    if (found < 0) {
+      // A closer leftover that cannot open and finds no earlier opener
+      // belongs inside the emphasis it just helped close, not after it
+      // (`**by command *tool*one***` -> the leftover `*` of `***` goes
+      // inside the `<strong>`). Only when it was marked as such when
+      // the emphasis formed (see below); otherwise it stays a literal
+      // delimiter after the emphasis (`**foo***` -> `*` stays outside).
+      if (nd.fromE && !nd.open && i > 0 && nodes[i - 1] === nd.fromE) {
+        nd.fromE.ch.push(nd);
+        nodes.splice(i, 1);
+        continue;
+      }
+      i++; continue;
+    }
     const opener = nodes[found];
     const take = Math.min(opener.n, nd.n) >= 2 ? 2 : 1;
     const tag = nd.ch === '~' ? 'del' : take === 2 ? 'strong' : 'em';
     const children = nodes.slice(found + 1, i);
-    nodes.splice(found + 1, i - found - 1, { t: 'e', tag, ch: children });
+    const enode = { t: 'e', tag, ch: children };
+    nodes.splice(found + 1, i - found - 1, enode);
     opener.n -= take;
     nd.n -= take;
     let ci = found + 2;
     if (opener.n === 0) { nodes.splice(found, 1); ci--; }
     if (nd.n === 0) { nodes.splice(ci, 1); i = ci; }
-    else i = ci; // closer still has delimiters: try to pair it again
+    else {
+      // Mark a strong-closing leftover for moving inside, but only
+      // when the strong's content has an inner emphasis followed
+      // immediately by a word char (`**a *b*c***`: the `<em>b</em>` is
+      // followed by `c`, no space). With a space after the inner em
+      // (`**a *b* c***`) or no inner em at all (`**foo***`), the
+      // leftover stays outside the strong.
+      if (tag === 'strong') {
+        let lastE = -1;
+        for (let q = 0; q < children.length; q++) {
+          if (typeof children[q] !== 'string' && children[q].t === 'e') lastE = q;
+        }
+        if (lastE >= 0 && lastE + 1 < children.length) {
+          const after = children[lastE + 1];
+          if (typeof after === 'string' && after.length > 0) {
+            const c0 = after.charCodeAt(0);
+            if (c0 !== 32 && c0 !== 9 && c0 !== 10 && c0 !== 13) nd.fromE = enode;
+          }
+        }
+      }
+      i = ci; // closer still has delimiters: try to pair it again
+    }
   }
 }
 
