@@ -752,6 +752,108 @@ function renderNodes(nodes, out) {
   }
 }
 
+// Masked code-span regions for the marked emphasis quirk (see below).
+// Scan `s` from `from` for backtick runs; an opening run of length n
+// pairs with the next run of length n (a run with no same-length partner
+// later is skipped, and scanning resumes after the closer). Each pair is
+// a region [opener.start, closer.end). Runs whose start lies inside a
+// `skip` span do not participate: those are the text (and, for a full
+// reference, the label) of a formed full/shortcut reference link, whose
+// backticks marked does not let poison later emphasis. A delimiter run
+// whose source position falls inside a region cannot CLOSE an emphasis
+// (it can still open one).
+//
+// The regions are GATED on a poisoned link: they are only computed from
+// the text start of a formed inline or collapsed link (or image) whose
+// backtick-run scan used the any-length fallback (see linkTextScan) — a
+// "poisoned" link. With no poisoned link in the
+// inline unit there is no masking at all, even if escaped or lone
+// backticks are present (`\` *x* `q`` still emphasises). From a poisoned
+// link's text start, same-length pairing chains forward over the rest of
+// the paragraph: a run inside the link's text that has no same-length
+// partner inside the text pairs with a backtick run after the link, and
+// an emphasis whose closer falls between them stays literal
+// (`[a ``b` c](#s) *x* `q`` leaves `*x*` raw, while `[a `b` c](#s) *x*
+// `q`` — a closed span inside the text — still emphasises, and a full
+// reference `[a ``b` c][r]` does not poison at all). Escaped backticks
+// count as runs: the scan is over the raw source. Each poisoned link
+// contributes its own chain (from its own text start); the union is used.
+function codeSpanRegions(s, skip, from) {
+  const runs = [];
+  for (let i = from || 0; i < s.length;) {
+    if (s.charCodeAt(i) !== 96) { i++; continue; }
+    let j = i + 1;
+    while (j < s.length && s.charCodeAt(j) === 96) j++;
+    let inSkip = false;
+    if (skip) for (let q = 0; q < skip.length; q++) {
+      if (i >= skip[q][0] && i < skip[q][1]) { inSkip = true; break; }
+    }
+    if (!inSkip) runs.push([i, j, j - i]);
+    i = j;
+  }
+  const regions = [];
+  for (let a = 0; a < runs.length;) {
+    let b = a + 1, found = -1;
+    while (b < runs.length) {
+      if (runs[b][2] === runs[a][2]) { found = b; break; }
+      b++;
+    }
+    if (found < 0) { a++; continue; }
+    regions.push([runs[a][0], runs[found][1]]);
+    a = found + 1;
+  }
+  return regions;
+}
+
+// Scan the backtick runs of a link text `s[ts, te)` as marked's
+// link-text scan does — at a run of length n, first look for the next
+// run of length exactly n; if there is none, take the next run of any
+// length; if there is no next run at all the scan fails. Returns
+// 'fail' (the link does not form), 'poisoned' (the scan completed but
+// used the any-length fallback at least once — e.g. text runs (2,1),
+// (1,2) or (3,1) poison later emphasis), or 'clean' (e.g. (1,1),
+// (2,2), (2,1,2)). A full or shortcut reference link never poisons,
+// whatever its text holds, so the caller only asks for the poisoned
+// result for inline/collapsed links.
+function linkTextScan(s, ts, te) {
+  const runs = [];
+  for (let i = ts; i < te;) {
+    if (s.charCodeAt(i) !== 96) { i++; continue; }
+    let j = i + 1;
+    while (j < te && s.charCodeAt(j) === 96) j++;
+    // A run preceded by an odd number of backslashes has its first
+    // backtick escaped, so only the unescaped remainder is a run
+    // (`[a \``b` c](#s)` leaves runs (1),(1), which pair cleanly and
+    // do not poison — probe94 H; a lone escaped backtick is no run).
+    // The masked-region chains themselves stay escape-blind (probe90 E).
+    let k = i - 1, bs = 0;
+    while (k >= ts && s.charCodeAt(k) === 92) { bs++; k--; }
+    const len = (j - i) - (bs % 2);
+    if (len > 0) runs.push(len);
+    i = j;
+  }
+  let usedFallback = false;
+  for (let a = 0; a < runs.length;) {
+    let b = a + 1, found = -1;
+    while (b < runs.length) { if (runs[b] === runs[a]) { found = b; break; } b++; }
+    if (found >= 0) { a = found + 1; continue; }
+    if (a + 1 < runs.length) { usedFallback = true; a += 2; continue; }
+    return 'fail'; // a run with no closer at all
+  }
+  return usedFallback ? 'poisoned' : 'clean';
+}
+
+// A delimiter inside a masked code-span region cannot close.
+function maskDelimiters(nodes, regions) {
+  if (!regions || regions.length === 0) return;
+  for (const nd of nodes) {
+    if (typeof nd === 'string' || nd.t !== 'd' || !nd.close || nd.pos === undefined) continue;
+    for (let q = 0; q < regions.length; q++) {
+      if (nd.pos >= regions[q][0] && nd.pos < regions[q][1]) { nd.close = false; break; }
+    }
+  }
+}
+
 // CommonMark delimiter-stack emphasis. Operates in place on a flat node
 // list; delimiters that pair wrap the nodes between them in an em/strong
 // (or del for '~') node. `~` uses the same pairing rules.
@@ -961,7 +1063,7 @@ function startsCI(s, i, lit) {
 
 // Try to form a link/image at s[i] === ']'. Returns the index just past
 // the link suffix, or -1 when no link forms (']' stays literal).
-function tryLink(s, i, nodes, brackets, refs) {
+function tryLink(s, i, nodes, brackets, refs, refSpans, poisonStarts) {
   let bi = brackets.length - 1;
   while (bi >= 0 && !brackets[bi].act) bi--;
   if (bi < 0) return -1;
@@ -999,10 +1101,25 @@ function tryLink(s, i, nodes, brackets, refs) {
       return -1;
     }
   }
+  const ts = opener.spos + (opener.img ? 2 : 1);
+  // A link also fails when the backtick-run scan of its text fails:
+  // at a run of length n the next run of length n is a code span, else
+  // the next run of any length; a run with no next run at all leaves
+  // the link literal (`[a ``b c](#s)`, `[a ``b *c* d](#s)`,
+  // `[a ``b``c` d](#s)`, `[a ``b`c` d](#s)` do not link, and a full
+  // reference whose text fails lets `[r]` resolve as a shortcut
+  // instead). Unlike the multi-backtick failure above, the emphasis
+  // delimiters inside the failed text are left alone: as plain
+  // paragraph text their emphasis still forms (`[a ``b *c* d](#s)`
+  // emphasises `c`).
+  const scan = linkTextScan(s, ts, i);
+  if (scan === 'fail') { opener.act = false; return -1; }
   const n = s.length;
   let href = null;
   let title = null;
   let end = -1;
+  let kind = null;
+  let labelJ = -1, labelK = -1;
   const j = i + 1;
   // Try an inline link first: `[text](dest "title")`. If that fails
   // (bad destination, bad title, no closing paren), fall back to the
@@ -1026,6 +1143,7 @@ function tryLink(s, i, nodes, brackets, refs) {
       if (ok && k < n && s.charCodeAt(k) === 41) {
         href = d[0];
         end = k + 1;
+        kind = 'inline';
       }
     }
   }
@@ -1048,6 +1166,9 @@ function tryLink(s, i, nodes, brackets, refs) {
     href = ref[0];
     title = ref[1];
     end = k + 1;
+    kind = label === '' ? 'collapsed' : 'full';
+    labelJ = j;
+    labelK = k;
   }
   if (end < 0) { // shortcut reference
     const key = normalizeLabel(plainText(children, true, true));
@@ -1056,6 +1177,21 @@ function tryLink(s, i, nodes, brackets, refs) {
     href = ref[0];
     title = ref[1];
     end = i + 1;
+    kind = 'shortcut';
+  }
+  // A formed full or shortcut reference link does not poison later
+  // emphasis (see codeSpanRegions): record its text span (and, for a
+  // full reference, its label span) so those backtick runs are skipped
+  // when a poisoned link's masked regions are computed. Inline links and
+  // collapsed references (`[t][]`) do poison, so they record nothing
+  // here; a poisoned one records its text start instead, and the
+  // paragraph's masked regions are chained from there.
+  if (refSpans && kind !== 'inline') {
+    if (kind === 'full') refSpans.push([ts, i], [labelJ, labelK + 1]);
+    else if (kind === 'shortcut') refSpans.push([ts, i]);
+  }
+  if (poisonStarts && (kind === 'inline' || kind === 'collapsed') && scan === 'poisoned') {
+    poisonStarts.push(ts);
   }
   // build the link: drop brackets opened inside it, and the opener itself
   while (brackets.length > 0 && brackets[brackets.length - 1].pos > opener.pos) brackets.pop();
@@ -1065,6 +1201,12 @@ function tryLink(s, i, nodes, brackets, refs) {
   for (let q = 0; q < children.length; q++) {
     const nd = children[q];
     if (typeof nd !== 'string' && nd.t === 'u' && nd.defer) children[q] = esc(nd.raw);
+  }
+  // Masked code-span regions inside this link's own text (coordinates
+  // shifted back to the paragraph source) before pairing its emphasis.
+  {
+    const childRegions = codeSpanRegions(s.slice(ts, i), null).map(r => [r[0] + ts, r[1] + ts]);
+    maskDelimiters(children, childRegions);
   }
   processEmphasis(children);
   const link = {
@@ -1083,6 +1225,8 @@ function tryLink(s, i, nodes, brackets, refs) {
 function parseInline(s, refs) {
   const nodes = [];
   const brackets = [];
+  const refSpans = [];
+  const poisonStarts = [];
   const n = s.length;
   let i = 0;
   let textStart = 0;
@@ -1435,7 +1579,7 @@ function parseInline(s, refs) {
     }
     if (c === 93) { // ] : the link text is the pending text run, so flush it first
       flushText(j);
-      const e = tryLink(s, j, nodes, brackets, refs);
+      const e = tryLink(s, j, nodes, brackets, refs, refSpans, poisonStarts);
       if (e >= 0) {
         i = e;
         textStart = i;
@@ -1485,7 +1629,7 @@ function parseInline(s, refs) {
       close = right && (!left || pa);
     }
     flushText(j);
-    nodes.push({ t: 'd', ch: String.fromCharCode(c), n: m2, open, close });
+    nodes.push({ t: 'd', ch: String.fromCharCode(c), n: m2, open, close, pos: j });
     i = j + m2;
     textStart = i;
   }
@@ -1493,6 +1637,16 @@ function parseInline(s, refs) {
   // pending text run (an unclosed backtick run, a trailing backslash);
   // flush it here so `two`` ` and a lone backtick survive
   flushText(n);
+  // Delimiters inside a masked code-span region cannot close an
+  // emphasis (see codeSpanRegions); clear that before pairing. Regions
+  // only exist when a poisoned link was formed in this inline unit:
+  // each one chains same-length backtick pairing forward from its text
+  // start, skipping runs inside formed full/shortcut reference links.
+  if (poisonStarts.length > 0) {
+    const regions = [];
+    for (const pts of poisonStarts) regions.push(...codeSpanRegions(s, refSpans, pts));
+    maskDelimiters(nodes, regions);
+  }
   processEmphasis(nodes);
   return nodes;
 }
