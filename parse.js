@@ -2032,13 +2032,17 @@ function parseBlocks(src, refs) {
     let rem = mc.rem;
     let col = mc.col;
     // A tab at the start of the content (after the containers) expands
-    // to spaces up to the next multiple of 4 columns. The column used is
-    // the outermost `>` marker's column + 2 when a quote matched (nested
-    // quotes expand as if the content started at column 2), else the
-    // content column itself. A line with no matched container keeps its
-    // tab (`a\n\tb` stays `a\n\tb`).
+    // to spaces up to the next multiple of 4 columns. For a fenced-code
+    // content line the column is the true absolute column (`col`), so
+    // `stripToCol` below sees the tab already expanded correctly
+    // (`>   \tindented` inside a list item wants 4 spaces, not 2).
+    // For other lines the column is the outermost `>` marker's column
+    // + 2 when a quote matched (nested quotes expand as if the content
+    // started at column 2), else the content column itself. A line with
+    // no matched container keeps its tab (`a\n\tb` stays `a\n\tb`).
     if (matched > 1 && rem.length > 0 && (rem.charCodeAt(0) === 32 || rem.charCodeAt(0) === 9)) {
-      rem = expandLead(rem, lineQuoteCol >= 0 ? lineQuoteCol + 2 : col);
+      const isFenceContent = leaf !== null && leaf.t === 'code' && leaf.fence && !blank;
+      rem = expandLead(rem, isFenceContent ? col : (lineQuoteCol >= 0 ? lineQuoteCol + 2 : col));
     }
     const leafOpen = leaf !== null;
     // A type 1-5 HTML block ended at its closing tag on the previous
