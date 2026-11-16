@@ -2233,37 +2233,39 @@ function parseBlocks(src, refs) {
     // (`a\n\tb` stays `a\n\tb`).
     if (matched > 1 && rem.length > 0 && (rem.charCodeAt(0) === 32 || rem.charCodeAt(0) === 9)) {
       const isFenceContent = leaf !== null && leaf.t === 'code' && leaf.fence && !blank;
+      // A quote nested inside a list item: only when a list is
+      // actually an ancestor of the quote in the matched containers;
+      // a list that merely precedes the quote as a sibling does not
+      // count. A list nested inside a quote still uses the absolute
+      // column (`> \tindented` in a quote+list -> 4 spaces).
+      let quoteInList = false;
+      if (lineQuoteCol >= 0) {
+        let seenList = false;
+        for (let q = 1; q < matched; q++) {
+          const ct = stack[q].t;
+          if (ct === 'list' || ct === 'item') seenList = true;
+          else if (ct === 'quote' && seenList) { quoteInList = true; break; }
+        }
+      }
+      // The column a tab in a quote nested in a list expands from is
+      // the smallest column at or after the `>` marker that is 2 mod
+      // 4: the tab then expands to 2 spaces. A `>` at col 2 uses col
+      // 2; a `>` at col 4 uses col 6 (the content column); a `>` at
+      // col 7 (doc-30, tab directly after `>`) uses col 10; a `>` at
+      // col 9 (doc-40) uses col 10. Using the marker column or the
+      // content column alone is wrong when neither is 2 mod 4. This
+      // applies to fenced-code content and to other lines (doc-17: a
+      // paragraph tab line in a quote at col 2 inside a list item
+      // wants 2 spaces, not 4).
+      const quoteListCol = lineQuoteCol + ((2 - (lineQuoteCol % 4) + 4) % 4);
       let expCol;
       if (isFenceContent) {
         const inList = stack.slice(0, matched).some(c => c.t === 'list' || c.t === 'item');
-        // A quote nested inside a list item expands its tab from the
-        // `>` marker's own column (`- a\n\n  > ```\n  > \tfoo` -> 2
-        // spaces), not from the absolute content column (4 spaces)
-        // and not from marker+2. Only when a list is actually an
-        // ancestor of the quote in the matched containers; a list
-        // that merely precedes the quote as a sibling does not count.
-        // A list nested inside a quote still uses the absolute column
-        // (`> \tindented` in a quote+list -> 4 spaces).
-        // The column to expand from is the smallest column at or
-        // after the `>` marker that is 2 mod 4: the tab then expands
-        // to 2 spaces. A `>` at col 2 uses col 2; a `>` at col 4
-        // uses col 6 (the content column); a `>` at col 7 (doc-30,
-        // tab directly after `>`) uses col 10; a `>` at col 9
-        // (doc-40) uses col 10. Using the marker column or the
-        // content column alone is wrong when neither is 2 mod 4.
-        let quoteInList = false;
-        if (lineQuoteCol >= 0) {
-          let seenList = false;
-          for (let q = 1; q < matched; q++) {
-            const ct = stack[q].t;
-            if (ct === 'list' || ct === 'item') seenList = true;
-            else if (ct === 'quote' && seenList) { quoteInList = true; break; }
-          }
-        }
-        if (quoteInList) expCol = lineQuoteCol + ((2 - (lineQuoteCol % 4) + 4) % 4);
+        if (quoteInList) expCol = quoteListCol;
         else expCol = inList ? col : (lineQuoteCol >= 0 ? lineQuoteCol + 2 : col);
       } else {
-        expCol = lineQuoteCol >= 0 ? lineQuoteCol + 2 : col;
+        if (quoteInList) expCol = quoteListCol;
+        else expCol = lineQuoteCol >= 0 ? lineQuoteCol + 2 : col;
       }
       rem = expandLead(rem, expCol);
     }
