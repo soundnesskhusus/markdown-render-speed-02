@@ -1260,9 +1260,28 @@ function parseInline(s, refs) {
     if (c === 96) { // code span
       let m2 = 0;
       while (j + m2 < n && s.charCodeAt(j + m2) === 96) m2++;
+      // A code span inside link text swallows the `]` that closes
+      // the link only when it is the only backtick run in that link
+      // text (`[not a `link](/foo`)`, `[foo`](/uri)`). When another
+      // backtick run sits in the same link text — before this opener
+      // or between it and the `]` (`[a ``b` c](u)`, `[issue read two
+      // ``small`](u)`, `[run ``response`][tool-91]`) — the span must
+      // close before the `]`; otherwise it is literal and the link
+      // forms. The `]` used is the first one after this opener.
+      let spanLimit = n;
+      for (let b = brackets.length - 1; b >= 0; b--) {
+        if (!brackets[b].act) continue;
+        const cb = s.indexOf(']', j);
+        if (cb < 0) break;
+        let other = false;
+        for (let q = brackets[b].spos; q < j; q++) if (s.charCodeAt(q) === 96) { other = true; break; }
+        if (!other) for (let q = j + m2; q < cb; q++) if (s.charCodeAt(q) === 96) { other = true; break; }
+        if (other) spanLimit = cb;
+        break;
+      }
       let k = j + m2;
       let close = -1;
-      while (k < n) {
+      while (k < spanLimit) {
         if (s.charCodeAt(k) === 96) {
           let r = 0;
           while (k + r < n && s.charCodeAt(k + r) === 96) r++;
@@ -1394,7 +1413,7 @@ function parseInline(s, refs) {
     }
     if (c === 91) { // [
       flushText(j);
-      const br = { t: '[', img: 0, act: 1, pos: nodes.length };
+      const br = { t: '[', img: 0, act: 1, pos: nodes.length, spos: j };
       nodes.push(br);
       brackets.push(br);
       i = j + 1;
@@ -1404,7 +1423,7 @@ function parseInline(s, refs) {
     if (c === 33) { // !
       if (j + 1 < n && s.charCodeAt(j + 1) === 91) {
         flushText(j);
-        const br = { t: '[', img: 1, act: 1, pos: nodes.length };
+        const br = { t: '[', img: 1, act: 1, pos: nodes.length, spos: j };
         nodes.push(br);
         brackets.push(br);
         i = j + 2;
