@@ -189,6 +189,22 @@ function stripToCol(s, col, target) {
 // is removed, never partially expanded to spaces (`  ```\n\tfoo` ->
 // `foo`, not `  foo`; `  ```\n  \tfoo` -> `\tfoo`, the tab untouched).
 // A fence indented by spaces strips that many leading spaces/tabs.
+// Strip a fenced code block's indent from a content line, with the
+// tilde-fence-in-a-block-quote exception: when a `~~~` fence sits
+// inside a block quote and a content line's leading whitespace is
+// exactly the fence indent, marked keeps it (`>  ~~~x` / `>  if git`
+// -> ` if git`, not `if git`). Backtick fences in quotes strip
+// normally (`>  ```x` / `>  if git` -> `if git`), as does a tilde
+// fence when the content is more indented than the fence, and at the
+// top level a fence indented N strips N.
+function stripFence(s, leaf) {
+  const indent = leaf.indent;
+  if (!leaf.inQuote || leaf.ch !== '~' || indent <= 0) return stripFenceIndent(s, indent);
+  let lead = 0;
+  while (lead < s.length && (s.charCodeAt(lead) === 32 || s.charCodeAt(lead) === 9)) lead++;
+  if (lead === indent) return s;
+  return stripFenceIndent(s, indent);
+}
 function stripFenceIndent(s, indent) {
   let i = 0;
   while (i < indent && i < s.length) {
@@ -2137,7 +2153,7 @@ function parseBlocks(src, refs) {
       }
       const fence = matchFence(cur, idx);
       if (fence) {
-        const code = { t: 'code', fence: 1, ch: fence.ch, len: fence.len, indent: ind, lang: fenceInfoLang(fence.info), lines: [], lastNL: lineNL[li] };
+        const code = { t: 'code', fence: 1, ch: fence.ch, len: fence.len, indent: ind, inQuote: stack.some(c => c.t === 'quote'), lang: fenceInfoLang(fence.info), lines: [], lastNL: lineNL[li] };
         addBlock(stack[stack.length - 1], code);
         leaf = code;
         return;
@@ -2285,7 +2301,7 @@ function parseBlocks(src, refs) {
             while (stack.length > matched) popContainer();
             continue;
           }
-          leaf.lines.push(stripFenceIndent(rem, leaf.indent));
+          leaf.lines.push(stripFence(rem, leaf));
           leaf.lastNL = lineNL[li];
           continue;
         }
@@ -2344,7 +2360,7 @@ function parseBlocks(src, refs) {
       if (leaf && leaf.t === 'code') {
         // a blank line inside a code block keeps its whitespace, with
         // the code indent stripped (`    chunk1\n      \n` -> `chunk1\n  \n`)
-        leaf.lines.push(leaf.fence ? stripFenceIndent(rem, leaf.indent) : stripToCol(rem, col, col + 4));
+        leaf.lines.push(leaf.fence ? stripFence(rem, leaf) : stripToCol(rem, col, col + 4));
         leaf.lastNL = lineNL[li];
       } else if (leaf && leaf.t === 'html' && (leaf.endSub !== null || leaf.endTag)) {
         // types 1-5 end at their closing tag, not at a blank line:
@@ -2401,7 +2417,7 @@ function parseBlocks(src, refs) {
       }
       if (leaf.t === 'code' && leaf.fence) {
         if (isClosingFence(rem, col, leaf)) { closeLeaf(); continue; }
-        leaf.lines.push(stripFenceIndent(rem, leaf.indent));
+        leaf.lines.push(stripFence(rem, leaf));
         leaf.lastNL = lineNL[li];
         continue;
       }
