@@ -759,8 +759,12 @@ function processEmphasis(nodes) {
           const after = nodes[strongIdx + 1];
           const spaceBefore = typeof before === 'string' && before.length > 0 &&
             (before.charCodeAt(before.length - 1) === 32 || before.charCodeAt(before.length - 1) === 9);
+          // the char after the strong must be a word char: a newline
+          // (soft break) is whitespace, so `**baz**\nbim` does NOT
+          // block the pairing (`**foo *bar **baz**\nbim* bop**` pairs)
           const wordAfter = typeof after === 'string' && after.length > 0 &&
-            after.charCodeAt(0) !== 32 && after.charCodeAt(0) !== 9;
+            after.charCodeAt(0) !== 32 && after.charCodeAt(0) !== 9 &&
+            after.charCodeAt(0) !== 10 && after.charCodeAt(0) !== 13;
           if (spaceBefore && wordAfter) continue;
         }
       }
@@ -768,8 +772,11 @@ function processEmphasis(nodes) {
       // opener when a later `**` closer is waiting to form a strong
       // with it (`**public as *so*other* option html**`: the `*` after
       // `other` stays literal inside the `<strong>`, it does not pair
-      // with the opening `**` as emphasis).
-      if (o.ch === '*' && o.n >= 2 && nd.n === 1) {
+      // with the opening `**` as emphasis). Only an exact `**` opener
+      // is protected: a `***` opener can give up one asterisk for the
+      // em and still leave `**` for the strong (`***foo* bar**` ->
+      // `<strong><em>foo</em> bar</strong>`).
+      if (o.ch === '*' && o.n === 2 && nd.n === 1) {
         let laterStrong = false;
         for (let k = i + 1; k < nodes.length; k++) {
           const later = nodes[k];
