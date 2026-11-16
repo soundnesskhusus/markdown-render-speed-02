@@ -272,9 +272,9 @@ function anchorOpen(tag) {
   if (tag.length < 3 || tag.charCodeAt(0) !== 60) return false;
   const c1 = tag.charCodeAt(1);
   if (c1 !== 97 && c1 !== 65) return false;
-  const c2 = tag.charCodeAt(2);
-  if (c2 === 62 || c2 === 47) return true; // bare `<a>` / `<a/>`
-  if (c2 !== 32) return false; // must be a literal space, not tab/newline
+  // a literal space must follow `<a`: bare `<a>` / `<a/>` do not set
+  // inLink, but `<a >`, `<a  >` and `<a x>` do
+  if (tag.charCodeAt(2) !== 32) return false;
   // a quoted attribute value must be followed by a space, `>`, `/`,
   // or the end of the tag — not directly by another attribute char
   let i = 2;
@@ -2033,16 +2033,25 @@ function parseBlocks(src, refs) {
     let col = mc.col;
     // A tab at the start of the content (after the containers) expands
     // to spaces up to the next multiple of 4 columns. For a fenced-code
-    // content line the column is the true absolute column (`col`), so
-    // `stripToCol` below sees the tab already expanded correctly
-    // (`>   \tindented` inside a list item wants 4 spaces, not 2).
-    // For other lines the column is the outermost `>` marker's column
-    // + 2 when a quote matched (nested quotes expand as if the content
-    // started at column 2), else the content column itself. A line with
-    // no matched container keeps its tab (`a\n\tb` stays `a\n\tb`).
+    // content line the column depends on the containers: inside a list
+    // item it is the true absolute column (`col`, so `>   \tindented`
+    // in a list item wants 4 spaces), while directly in a quote it is
+    // the outermost `>` marker's column + 2 (so `> > \tindented` wants
+    // 2 spaces). For other lines the column is the outermost `>`
+    // marker's column + 2 when a quote matched (nested quotes expand
+    // as if the content started at column 2), else the content column
+    // itself. A line with no matched container keeps its tab
+    // (`a\n\tb` stays `a\n\tb`).
     if (matched > 1 && rem.length > 0 && (rem.charCodeAt(0) === 32 || rem.charCodeAt(0) === 9)) {
       const isFenceContent = leaf !== null && leaf.t === 'code' && leaf.fence && !blank;
-      rem = expandLead(rem, isFenceContent ? col : (lineQuoteCol >= 0 ? lineQuoteCol + 2 : col));
+      let expCol;
+      if (isFenceContent) {
+        const inList = stack.slice(0, matched).some(c => c.t === 'list' || c.t === 'item');
+        expCol = inList ? col : (lineQuoteCol >= 0 ? lineQuoteCol + 2 : col);
+      } else {
+        expCol = lineQuoteCol >= 0 ? lineQuoteCol + 2 : col;
+      }
+      rem = expandLead(rem, expCol);
     }
     const leafOpen = leaf !== null;
     // A type 1-5 HTML block ended at its closing tag on the previous
