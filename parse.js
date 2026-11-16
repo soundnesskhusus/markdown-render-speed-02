@@ -2190,10 +2190,20 @@ function parseBlocks(src, refs) {
         // A quote nested inside a list item expands its tab from the
         // `>` marker's own column (`- a\n\n  > ```\n  > \tfoo` -> 2
         // spaces), not from the absolute content column (4 spaces)
-        // and not from marker+2. Only when the list is the outermost
-        // container; a list nested inside a quote still uses the
-        // absolute column (`> \tindented` in a quote+list -> 4 spaces).
-        const quoteInList = lineQuoteCol >= 0 && (stack[1].t === 'list' || stack[1].t === 'item');
+        // and not from marker+2. Only when a list is actually an
+        // ancestor of the quote in the matched containers; a list
+        // that merely precedes the quote as a sibling does not count.
+        // A list nested inside a quote still uses the absolute column
+        // (`> \tindented` in a quote+list -> 4 spaces).
+        let quoteInList = false;
+        if (lineQuoteCol >= 0) {
+          let seenList = false;
+          for (let q = 1; q < matched; q++) {
+            const ct = stack[q].t;
+            if (ct === 'list' || ct === 'item') seenList = true;
+            else if (ct === 'quote' && seenList) { quoteInList = true; break; }
+          }
+        }
         if (quoteInList) expCol = lineQuoteCol;
         else expCol = inList ? col : (lineQuoteCol >= 0 ? lineQuoteCol + 2 : col);
       } else {
