@@ -124,7 +124,7 @@ function entityAt(s, i) {
 // encode) in a link destination. encodeURI leaves % alone, so an already
 // encoded %20 stays %20; a raw space becomes %20.
 function cleanHref(dest) {
-  if (dest.indexOf(' ') < 0 && dest.indexOf('<') < 0 && dest.indexOf('>') < 0 && dest.indexOf('"') < 0 && dest.indexOf('{') < 0 && dest.indexOf('}') < 0 && dest.indexOf('|') < 0 && dest.indexOf('\\') < 0 && dest.indexOf('^') < 0 && dest.indexOf('`') < 0 && dest.indexOf('[') < 0 && dest.indexOf(']') < 0) {
+  if (dest.indexOf(' ') < 0 && dest.indexOf('\t') < 0 && dest.indexOf('\n') < 0 && dest.indexOf('\r') < 0 && dest.indexOf('<') < 0 && dest.indexOf('>') < 0 && dest.indexOf('"') < 0 && dest.indexOf('{') < 0 && dest.indexOf('}') < 0 && dest.indexOf('|') < 0 && dest.indexOf('\\') < 0 && dest.indexOf('^') < 0 && dest.indexOf('`') < 0 && dest.indexOf('[') < 0 && dest.indexOf(']') < 0) {
     // fast path: still need non-ASCII encoding
     let ascii = true;
     for (let i = 0; i < dest.length; i++) if (dest.charCodeAt(i) > 127) { ascii = false; break; }
